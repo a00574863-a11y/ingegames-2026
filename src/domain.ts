@@ -6,6 +6,17 @@ export const NAMES: Record<Career,string> = {IMT:'Ingeniería Mecatrónica',IIS:
 export const COLORS: Record<Career,string> = {IMT:'#FF7417',IIS:'#1677FF',IIT:'#A923F5'};
 export type Profile = {id:string;name:string;role:'admin'|'judge';enabled:boolean;activities:Activity[]};
 export type Team = {id:string;name:string;career:Career;members:string[];activities:Activity[];active:boolean;points:number;createdAt?:unknown};
+export const MIN_TEAM_MEMBERS=1,MAX_TEAM_MEMBERS=4;
+/** Optional blank form fields are omitted; the first member must be provided. */
+export function teamMembersFromFields(fields:string[]):string[]{
+ if(fields.length<MIN_TEAM_MEMBERS||fields.length>MAX_TEAM_MEMBERS)throw new Error('Registra de 1 a 4 integrantes.');
+ const trimmed=fields.map(name=>name.trim());
+ if(!trimmed[0])throw new Error('El integrante 1 es obligatorio.');
+ const members=trimmed.filter(Boolean);
+ if(members.some(name=>name.length>100))throw new Error('Cada nombre admite hasta 100 caracteres.');
+ if(new Set(members.map(name=>name.toLowerCase())).size!==members.length)throw new Error('Los integrantes deben ser distintos.');
+ return members;
+}
 export type ScoreEvent = {id:string;teamId:string;teamName:string;career:Career;activity:Activity;points:number;judgeId:string;judgeName:string;kind:'score'|'adjustment'|'reversal';reason:string;reverses?:string;createdAt?:{seconds:number}};
 export type State = {phase?:'practice'|'official';resetRevision?:number;status:'not_started'|'running'|'paused'|'finished';totals:Record<Career,number>;byActivity:Record<Activity,Record<Career,number>>;recent:{id:string;career:Career;activity:Activity;points:number}[];presets:number[];customPoints:boolean;animations:boolean;rotation:boolean;rotationSeconds:number;reveal:boolean;sharedWinners:boolean;tieWinner:Career|'';revision:number};
 export const ZERO = ():Record<Career,number> => ({IMT:0,IIS:0,IIT:0});

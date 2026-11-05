@@ -4,9 +4,9 @@ import {it,expect} from 'vitest';
 
 // Upgrade a populated, frozen installation, including Auth password-hash fixtures.
 // No production connections and no bootstrap_accounts call.
-it.each([1,3])('recupera una instalación existente en migración %i sin tocar cuentas',async installed=>{
+it.each([1,3,4,5])('recupera una instalación existente en migración %i sin tocar cuentas',async installed=>{
  const db=new PGlite(),admin='10000000-0000-4000-8000-000000000001';
- const migrations=['202611040001_ingegames.sql','202611040002_modo_practica.sql','202611040003_reinicio_practica.sql','202611040004_practica_segura.sql'];
+ const migrations=['202611040001_ingegames.sql','202611040002_modo_practica.sql','202611040003_reinicio_practica.sql','202611040004_practica_segura.sql','202611040005_fix_reset_delete.sql','202611040006_equipos_flexibles.sql'];
  try{
   await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
    create schema auth;create table auth.users(id uuid primary key,email text,encrypted_password text);

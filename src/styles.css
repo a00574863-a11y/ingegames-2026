@@ -11,3 +11,5 @@
 .score-pulse{position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,var(--team),transparent 75%)}
 
 .phase-banner{position:relative;z-index:2;display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;padding:14px 20px;margin-bottom:20px;border:1px solid #ffd16666;border-radius:12px;background:#2a2115;color:#ffe6a0;font-size:14px}.phase-banner strong{letter-spacing:.1em}.phase-banner.official{border-color:#38d99c55;background:#102a25;color:#9ef0cd}.winner>.phase-banner{position:absolute;top:20px;left:5%;right:5%;justify-content:center;z-index:3}
+
+.member-field{display:flex;align-items:center;gap:8px;margin-bottom:16px}.member-field input{min-width:0;flex:1;margin-bottom:0}.member-field button{flex:none}.team-member-fields>p{margin:8px 0 18px}.team-members{overflow-wrap:anywhere}

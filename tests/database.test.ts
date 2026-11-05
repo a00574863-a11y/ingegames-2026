@@ -17,6 +17,8 @@ beforeAll(async()=>{
  await db.exec(readFileSync('supabase/migrations/202611040002_modo_practica.sql','utf8'));
  await db.exec(readFileSync('supabase/migrations/202611040003_reinicio_practica.sql','utf8'));
  await db.exec(readFileSync('supabase/migrations/202611040004_practica_segura.sql','utf8'));
+ await db.exec(readFileSync('supabase/migrations/202611040005_fix_reset_delete.sql','utf8'));
+ await db.exec(readFileSync('supabase/migrations/202611040006_equipos_flexibles.sql','utf8'));
  const accounts=Array.from({length:10},(_,i)=>({id:user(i+1),name:i===0?'Administrador':`Juez ${i}`,email:`cuenta${i}@test.invalid`}));
  for(const a of [...accounts,{id:user(99),email:'unauthorized@test.invalid'}])await db.query('insert into auth.users(id,email) values($1,$2)',[a.id,a.email]);
  await rpc('bootstrap_accounts',[accounts],['jsonb']);
@@ -44,10 +46,10 @@ describe('Backend PostgreSQL migrado',()=>{
    await expect(role('authenticated',uid,tx=>tx.query("update public.users set role='admin' where id=$1",[uid]))).rejects.toThrow();
   }
  });
- it('registra IMT, IIS e IIT, exige cuatro integrantes y evita nombres duplicados',async()=>{
+ it('registra IMT, IIS e IIT, exige al menos un integrante y evita nombres duplicados',async()=>{
   for(const career of ['IMT','IIS','IIT'])teams[career]=(await command('team',{name:`Equipo ${career}`,career,members:['Uno','Dos','Tres','Cuatro'],activities:all,active:true})).id;
   await expect(command('team',{name:'  equipo   IMT ',career:'IMT',members:['A','B','C','D'],activities:all,active:true})).rejects.toThrow(/existe/);
-  await expect(command('team',{name:'Inválido',career:'IMT',members:['A','B','C'],activities:all,active:true})).rejects.toThrow();
+  await expect(command('team',{name:'Inválido',career:'IMT',members:[],activities:all,active:true})).rejects.toThrow();
   await expect(command('team',{id:teams.IMT,name:'Equipo IMT',career:'IIS',members:['A','B','C','D'],activities:all,active:true})).rejects.toThrow(/inmutable/);
  });
  it('rechaza jueces en administración, desconocidos y puntos antes del inicio',async()=>{
