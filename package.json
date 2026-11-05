@@ -13,14 +13,16 @@
     "check:edge": "deno check supabase/functions/command/index.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "2.119.0",
+    "exceljs": "^4.4.0",
     "framer-motion": "^12.23.0",
     "lucide-react": "^0.468.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.0",
-    "@supabase/supabase-js": "2.119.0"
+    "react-router-dom": "^7.6.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.3.14",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
@@ -29,7 +31,6 @@
     "tailwindcss": "^4.1.0",
     "typescript": "~5.8.3",
     "vite": "8.3.5",
-    "vitest": "5.1.0",
-    "@electric-sql/pglite": "^0.3.14"
+    "vitest": "5.1.0"
   }
 }
