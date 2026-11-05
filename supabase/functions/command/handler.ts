@@ -19,7 +19,7 @@ export function createHandler(client:Client){return async(request:Request)=>{
   let payload:Record<string,any>;try{payload=JSON.parse(raw);}catch{return response(400,{error:'JSON inválido.'});}
   if(!payload||Array.isArray(payload)||typeof payload!=='object')return response(400,{error:'Solicitud inválida.'});
   const {action,...input}=payload;
-  if(!['judge','team','score','adjust','reverse','settings'].includes(action))return response(400,{error:'Acción desconocida.'});
+  if(!['judge','team','score','adjust','reverse','settings','reset_practice','start_official'].includes(action))return response(400,{error:'Acción desconocida.'});
   // No caller-supplied identity is ever forwarded as p_actor.
   const actor=identity.user.id;
   if(action==='judge'){
@@ -34,7 +34,11 @@ export function createHandler(client:Client){return async(request:Request)=>{
    const {data,error}=await client.rpc('finish_judge',{p_actor:actor,p_slot:slot,p_token:lease.token,p_payload:{name:name.trim(),email:email.trim().toLowerCase(),enabled,activities:input.activities}});
    if(error)return response(400,{error:error.message});reservation=undefined;return response(200,data);
   }
-  const {data,error}=await client.rpc('command',{p_actor:actor,p_action:action,p_payload:input});
+  const practiceAction = action === 'reset_practice' || action === 'start_official';
+  if(practiceAction&&(typeof input.operationId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.operationId)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<0))return response(400,{error:'Falta ID de operación o revisión válida. Actualiza el panel y vuelve a confirmar.'});
+  const {data,error}=practiceAction
+  ? await client.rpc('manage_practice',{p_actor:actor,p_action:action,p_operation_id:input.operationId,p_expected_revision:input.expectedRevision})
+  : await client.rpc('command',{p_actor:actor,p_action:action,p_payload:input});
   if(error)return response(400,{error:error.message});return response(200,data);
  }catch{return response(500,{error:'No se pudo confirmar la operación. Reintenta con el mismo ID.'});}
  finally{if(reservation)await client.rpc('cancel_judge',{p_slot:reservation.slot,p_token:reservation.token}).then(()=>undefined,()=>undefined);}

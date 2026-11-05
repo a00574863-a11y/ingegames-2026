@@ -30,3 +30,29 @@ it('limita las cuentas de jueces a nueve',async()=>{const {handler,client}=fixtu
 it('actualiza Auth solo después de reservar y revocar el permiso del juez',async()=>{const {handler,client}=fixture();const result=await handler(request({action:'judge',slot:1,name:'Juez',email:'juez@test.invalid',password:'Example-Test-Password!',enabled:true,activities:['pingpong']}));expect(result.status).toBe(200);expect(client.rpc.mock.calls.map(c=>c[0])).toEqual(['prepare_judge','finish_judge']);expect(client.auth.admin.updateUserById).toHaveBeenCalledTimes(1);expect(JSON.stringify(client.rpc.mock.calls)).not.toContain('Example-Test-Password!');});
 it('si Auth falla no restaura permisos y libera la reserva para reintentar',async()=>{const {handler,client}=fixture();client.auth.admin.updateUserById.mockResolvedValueOnce({error:new Error('error') as any});expect((await handler(request({action:'judge',slot:1,name:'Juez',email:'juez@test.invalid',enabled:false,activities:['mesa']}))).status).toBe(400);expect(client.rpc.mock.calls.map(c=>c[0])).toEqual(['prepare_judge','cancel_judge']);});
 it('responde CORS y rechaza métodos o JSON inválidos',async()=>{const {handler}=fixture();expect((await handler(new Request('https://test.invalid',{method:'OPTIONS'}))).status).toBe(204);expect((await handler(new Request('https://test.invalid'))).status).toBe(405);expect((await handler(new Request('https://test.invalid',{method:'POST',headers:{Authorization:'Bearer token'},body:'bad json'}))).status).toBe(400);});
+it.each(['reset_practice','start_official'])('envía %s con identidad verificada, UUID y revisión',async action=>{
+ const {handler,client}=fixture(),operationId=crypto.randomUUID();
+ const response=await handler(request({action,operationId,expectedRevision:12,p_actor:'forged',phase:'practice'}));
+ expect(response.status).toBe(200);expect(await response.json()).toEqual({ok:true});
+ expect(client.rpc.mock.calls[0]).toEqual(['manage_practice',{p_actor:'verified-user',p_action:action,p_operation_id:operationId,p_expected_revision:12}]);
+ expect(client.auth.admin.updateUserById).not.toHaveBeenCalled();
+});
+it.each([
+ {},{operationId:'bad',expectedRevision:0},{operationId:crypto.randomUUID(),expectedRevision:-1},
+ {operationId:crypto.randomUUID(),expectedRevision:1.5},{operationId:crypto.randomUUID(),expectedRevision:'2'},
+ {operationId:crypto.randomUUID(),expectedRevision:Number.MAX_SAFE_INTEGER+1},
+])('rechaza reinicios incompletos o inválidos: %j',async payload=>{
+ const {handler,client}=fixture();expect((await handler(request({action:'reset_practice',...payload}))).status).toBe(400);expect(client.rpc).not.toHaveBeenCalled();
+});
+it('propaga errores de autorización o fase sin llamar a Auth admin',async()=>{
+ const {handler,client}=fixture();client.rpc.mockResolvedValueOnce({data:null,error:{message:'El evento oficial no puede reiniciarse.'}} as any);
+ const r=await handler(request({action:'reset_practice',operationId:crypto.randomUUID(),expectedRevision:0}));
+ expect(r.status).toBe(400);expect(await r.json()).toEqual({error:'El evento oficial no puede reiniciarse.'});expect(client.auth.admin.updateUserById).not.toHaveBeenCalled();
+});
+it('una respuesta perdida permite reintentar conservando UUID y revisión',async()=>{
+ const {handler,client}=fixture(),payload={action:'start_official',operationId:crypto.randomUUID(),expectedRevision:10};
+ client.rpc.mockRejectedValueOnce(new Error('network'));
+ expect((await handler(request(payload))).status).toBe(500);
+ expect((await handler(request(payload))).status).toBe(200);
+ expect(client.rpc.mock.calls[0]).toEqual(client.rpc.mock.calls[1]);
+});

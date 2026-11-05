@@ -14,6 +14,9 @@ async function state(){return (await role('anon','',tx=>tx.query<{data:State}>("
 beforeAll(async()=>{
  db=new PGlite();await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key,email text unique);create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;grant usage on schema auth to anon,authenticated,service_role;grant execute on function auth.uid() to anon,authenticated,service_role;`);
  await db.exec(readFileSync('supabase/migrations/202611040001_ingegames.sql','utf8'));
+ await db.exec(readFileSync('supabase/migrations/202611040002_modo_practica.sql','utf8'));
+ await db.exec(readFileSync('supabase/migrations/202611040003_reinicio_practica.sql','utf8'));
+ await db.exec(readFileSync('supabase/migrations/202611040004_practica_segura.sql','utf8'));
  const accounts=Array.from({length:10},(_,i)=>({id:user(i+1),name:i===0?'Administrador':`Juez ${i}`,email:`cuenta${i}@test.invalid`}));
  for(const a of [...accounts,{id:user(99),email:'unauthorized@test.invalid'}])await db.query('insert into auth.users(id,email) values($1,$2)',[a.id,a.email]);
  await rpc('bootstrap_accounts',[accounts],['jsonb']);
@@ -114,5 +117,144 @@ describe('Backend PostgreSQL migrado',()=>{
  it('no permite reiniciar las cuentas ni reabrir los resultados',async()=>{
   await expect(rpc('bootstrap_accounts',[[]],['jsonb'])).rejects.toThrow(/inicializadas|sobrescribir/);
   await expect(command('settings',{status:'running'})).rejects.toThrow(/Transición/);
+ });
+ async function manage(action='reset_practice',actor=admin,id=crypto.randomUUID(),revision?:number){
+  return rpc('manage_practice',[actor,action,id,revision??(await state()).revision],['uuid','text','uuid','bigint'],actor);
+ }
+ async function accounts(){return {
+  auth:(await db.query('select * from auth.users order by id')).rows,
+  users:(await db.query('select * from public.users order by id')).rows,
+  slots:(await db.query('select * from public.judge_slots order by id')).rows,
+  settings:(await db.query('select * from public.event_settings order by id')).rows
+ };}
+ async function clean(){
+  const s=await state();expect(s).toMatchObject({phase:'practice',status:'not_started',totals:{IMT:0,IIS:0,IIT:0},recent:[],presets:[5,10,20,50],customPoints:false,animations:true,rotation:false,rotationSeconds:20,reveal:false,sharedWinners:false,tieWinner:''});
+  expect(s).not.toHaveProperty('finalTotals');expect(s).not.toHaveProperty('finishedAt');
+  for(const scores of Object.values(s.byActivity))expect(scores).toEqual({IMT:0,IIS:0,IIT:0});
+  expect((await db.query('select * from public.teams')).rows).toHaveLength(0);
+  expect((await db.query('select * from public.score_events')).rows).toHaveLength(0);
+ }
+ async function play(){
+  const t=await command('team',{name:'Ensayo repetible',career:'IMT',members:['A','B','C','D'],activities:all,active:true});
+  await command('settings',{status:'running'});
+  await command('score',{operationId:crypto.randomUUID(),teamId:t.id,activity:'pingpong',points:20},judges[0]);
+  return t.id;
+ }
+ it('reinicia tras finalizar y revelar; restaura cada opción y conserva cuentas, asignaciones y auditoría',async()=>{
+  const beforeAccounts=await accounts(),before=await state(),audit=(await db.query('select * from public.admin_audit order by id')).rows;
+  expect(before.reveal).toBe(true);expect(before).toHaveProperty('finalTotals');
+  await command('settings',{animations:false,rotation:true,rotationSeconds:90,customPoints:true,presets:[7]});
+  const revision=(await state()).revision;
+  await manage();await clean();expect((await state()).revision).toBe(revision+1);
+  expect(await accounts()).toEqual(beforeAccounts);
+  expect(beforeAccounts.users).toHaveLength(10);expect(beforeAccounts.slots).toHaveLength(9);
+  const afterAudit=(await db.query('select * from public.admin_audit order by id')).rows;
+  expect(afterAudit).toEqual(expect.arrayContaining(audit));expect(afterAudit.length).toBeGreaterThan(audit.length);
+ });
+ it('reinicia antes del inicio y permite reinicios consecutivos con revisión creciente',async()=>{
+  const revision=(await state()).revision;await manage();await manage();await clean();expect((await state()).revision).toBe(revision+2);
+ });
+ it('reinicia con equipos, puntuaciones, ajustes y anulaciones',async()=>{
+  const teamId=await play(),operationId=crypto.randomUUID();
+  await command('adjust',{operationId,teamId,activity:'pingpong',points:5,reason:'Corrección de ensayo'});
+  await command('reverse',{operationId:crypto.randomUUID(),eventId:operationId,reason:'Anulación de ensayo'});
+  await manage();await clean();
+ });
+ it('reinicia después de finalizar sin revelar y permite comenzar otra práctica inmediatamente',async()=>{
+  await play();await command('settings',{status:'finished'});expect((await state()).reveal).toBe(false);
+  await manage();await clean();await play();expect((await state()).totals.IMT).toBe(20);await manage();
+ });
+ it('rechaza jueces, desconocidos y administrador deshabilitado sin alterar el estado',async()=>{
+  const before=await state();
+  for(const actor of [...judges,user(99)])await expect(manage('reset_practice',actor)).rejects.toThrow(/administrador/);
+  await db.query('update public.users set enabled=false where id=$1',[admin]);
+  try{await expect(manage()).rejects.toThrow(/administrador/);}finally{await db.query('update public.users set enabled=true where id=$1',[admin]);}
+  expect(await state()).toEqual(before);
+ });
+ it('cierra RPC antiguo, RPC nuevo, recibos y escrituras directas a todos los clientes',async()=>{
+  expect((await db.query("select to_regprocedure('public.manage_practice(uuid,text)') as f")).rows[0]).toEqual({f:null});
+  for(const name of ['anon','authenticated'] as const){
+   await expect(role(name,admin,tx=>tx.query("select public.manage_practice($1,'reset_practice',$2,0)",[admin,crypto.randomUUID()]))).rejects.toThrow(/permission denied/);
+   for(const table of ['practice_requests','admin_audit'])await expect(role(name,admin,tx=>tx.query('select * from public.'+table))).rejects.toThrow(/permission denied/);
+  }
+ });
+ it('valida acción, UUID y revisión incluso si se invoca directamente por servicio',async()=>{
+  const before=await state();
+  for(const args of [[admin,null,crypto.randomUUID(),before.revision],[admin,'bad',crypto.randomUUID(),before.revision],[admin,'reset_practice',null,before.revision],[admin,'reset_practice',crypto.randomUUID(),null],[admin,'reset_practice',crypto.randomUUID(),-1]]){
+   await expect(rpc('manage_practice',args,['uuid','text','uuid','bigint'])).rejects.toThrow();
+  }
+  expect(await state()).toEqual(before);
+ });
+ it('un doble envío usa un único recibo y no borra datos registrados tras la primera respuesta',async()=>{
+  const id=crypto.randomUUID(),revision=(await state()).revision;
+  const results=await Promise.all([manage('reset_practice',admin,id,revision),manage('reset_practice',admin,id,revision)]);
+  expect(results.filter(r=>r.duplicate)).toHaveLength(1);expect((await state()).revision).toBe(revision+1);
+  await play();const before=await state();expect((await manage('reset_practice',admin,id,revision)).duplicate).toBe(true);expect(await state()).toEqual(before);
+  await expect(manage('start_official',admin,id,revision)).rejects.toThrow(/reutilizado/);
+  await expect(manage('reset_practice',admin,id,revision+1)).rejects.toThrow(/reutilizado/);
+  await manage();
+ });
+ it('solo acepta una de dos confirmaciones simultáneas distintas (PGlite serializa transacciones)',async()=>{
+  const revision=(await state()).revision;
+  const results=await Promise.allSettled([manage('reset_practice',admin,crypto.randomUUID(),revision),manage('reset_practice',admin,crypto.randomUUID(),revision)]);
+  expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);expect(results.filter(r=>r.status==='rejected')).toHaveLength(1);expect((await state()).revision).toBe(revision+1);
+ });
+ it('rechaza una confirmación obsoleta si otro juez puntúa mientras se revisa',async()=>{
+  const teamId=await play(),revision=(await state()).revision;
+  await command('score',{operationId:crypto.randomUUID(),teamId,activity:'pingpong',points:5},judges[0]);
+  const before=await state();await expect(manage('reset_practice',admin,crypto.randomUUID(),revision)).rejects.toThrow(/cambió/);expect(await state()).toEqual(before);await manage();
+ });
+ it.each([true,false])('serializa puntuación frente a reinicio, puntuación primero=%s',async scoreFirst=>{
+  const teamId=await play(),revision=(await state()).revision;
+  const score=()=>command('score',{operationId:crypto.randomUUID(),teamId,activity:'pingpong',points:5},judges[0]);
+  const reset=()=>manage('reset_practice',admin,crypto.randomUUID(),revision);
+  const results=await Promise.allSettled(scoreFirst?[score(),reset()]:[reset(),score()]);
+  expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+  expect(results.filter(r=>r.status==='rejected')).toHaveLength(1);
+  if(scoreFirst){expect((await state()).totals.IMT).toBe(25);await manage();}else await clean();
+ });
+ it('una alta o edición de equipo también invalida la confirmación anterior',async()=>{
+  const revision=(await state()).revision;
+  await command('team',{name:'Equipo recién registrado',career:'IIS',members:['A','B','C','D'],activities:all,active:true});
+  await expect(manage('reset_practice',admin,crypto.randomUUID(),revision)).rejects.toThrow(/cambió/);
+  expect((await db.query('select * from public.teams')).rows).toHaveLength(1);await manage();
+ });
+ it('revierte todo el reinicio si falla su auditoría',async()=>{
+  await play();const before=await state(),rows=(await db.query('select * from public.score_events')).rows;
+  await db.exec("create function public.test_fail_audit() returns trigger language plpgsql as $$ begin raise exception 'auditoria indisponible'; end; $$; create trigger test_fail before insert on public.admin_audit for each row execute function public.test_fail_audit();");
+  try{await expect(manage()).rejects.toThrow(/auditoria/);expect(await state()).toEqual(before);expect((await db.query('select * from public.score_events')).rows).toEqual(rows);expect((await db.query('select * from public.teams')).rows).toHaveLength(1);}
+  finally{await db.exec('drop trigger test_fail on public.admin_audit;drop function public.test_fail_audit();');}
+  await manage();
+ });
+ let officialId:string,officialRevision:number;
+ it('activa el oficial desde una práctica revelada y conserva las diez cuentas y permisos',async()=>{
+  await play();await command('settings',{status:'finished'});await command('settings',{reveal:true});const before=await accounts();
+  officialId=crypto.randomUUID();officialRevision=(await state()).revision;
+  expect(await manage('start_official',admin,officialId,officialRevision)).toMatchObject({ok:true,phase:'official',revision:officialRevision+1});
+  const s=await state();expect(s.status).toBe('not_started');expect(s.totals).toEqual({IMT:0,IIS:0,IIT:0});expect(s.reveal).toBe(false);expect(s).not.toHaveProperty('finalTotals');expect(s).not.toHaveProperty('finishedAt');expect(await accounts()).toEqual(before);
+  expect((await db.query('select * from public.teams')).rows).toHaveLength(0);expect((await db.query('select * from public.score_events')).rows).toHaveLength(0);
+ });
+ it('impide reiniciar el oficial y cambiar su fase mediante settings o escrituras SQL',async()=>{
+  const before=await state();
+  await expect(manage()).rejects.toThrow(/oficial/);await expect(manage('start_official')).rejects.toThrow(/oficial/);
+  await expect(command('settings',{phase:'practice'})).rejects.toThrow(/Sin cambios/);
+  for(const expr of ["jsonb_set(data,'{phase}','\"practice\"')","data-'phase'","jsonb_set(data,'{phase}','null')"]){
+   await expect(db.exec("update public.public_state set data="+expr+" where id='state'")).rejects.toThrow(/oficial/);
+  }
+  for(const sql of ["delete from public.public_state","truncate public.public_state","insert into public.public_state values('state','{}',now())"]){
+   await expect(role('service_role',admin,tx=>tx.exec(sql))).rejects.toThrow(/permission denied/);
+  }
+  expect(await state()).toEqual(before);
+ });
+ it('permite puntuación normal de los nueve jueces durante el evento oficial',async()=>{
+  const teamId=await play();
+  await Promise.all(judges.map((actor,i)=>command('score',{operationId:crypto.randomUUID(),teamId,activity:all[i%4],points:5},actor)));
+  expect((await state()).totals.IMT).toBe(65);expect((await state()).phase).toBe('official');
+  const before=await state();expect((await manage('start_official',admin,officialId,officialRevision)).duplicate).toBe(true);expect(await state()).toEqual(before);
+ });
+ it('congela resultados oficiales y mantiene bloqueado el reinicio tras revelar',async()=>{
+  await command('settings',{status:'finished'});await command('settings',{reveal:true});const before=await state();
+  for(const action of ['score','adjust','reverse'])await expect(command(action,{operationId:crypto.randomUUID()})).rejects.toThrow(/congelados/);
+  await expect(command('settings',{status:'running'})).rejects.toThrow(/Transición/);await expect(manage()).rejects.toThrow(/oficial/);expect(await state()).toEqual(before);
  });
 });
