@@ -1,0 +1,22 @@
+// Read-only public deployment check; never finalize or mutate a real tournament.
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {createClient} from '@supabase/supabase-js';
+const env=fs.readFileSync('.env.local','utf8');
+const value=k=>env.split(/\r?\n/).find(l=>l.startsWith(k+'='))?.slice(k.length+1).trim();
+const site='https://a00574863-a11y.github.io/ingegames-2026/';
+const page=await fetch(site+'?verify='+Date.now(),{cache:'no-store'});assert.equal(page.status,200);
+const html=await page.text();
+const asset=html.match(/src="([^"]+\.js)"/)[1];
+const response=await fetch(new URL(asset,site));assert.equal(response.status,200);
+const bundle=await response.text();
+assert(bundle.includes('RANKING DE EQUIPOS'));assert(bundle.includes('DESCARGAR RESULTADOS EN EXCEL'));assert(bundle.includes('tournament_report'));
+const excel=bundle.match(/exceljs[^"'`\s]*\.js/)?.[0];assert(excel);
+assert.equal((await fetch(new URL(excel,new URL(asset,site)))).status,200);
+const clients=[0,1].map(()=>createClient(value('VITE_SUPABASE_URL'),value('VITE_SUPABASE_PUBLISHABLE_KEY'),{auth:{persistSession:false,autoRefreshToken:false}}));
+const states=await Promise.all(clients.map(async c=>{const {data,error}=await c.from('public_state').select('data').eq('id','state').single();assert.ifError(error);return data.data;}));
+assert.deepEqual(states[0],states[1]);assert(states[0].sessionId);assert(Array.isArray(states[0].teams));
+for(const t of states[0].teams)assert.deepEqual(Object.keys(t).sort(),['career','id','name','points']);
+const {error}=await clients[0].rpc('tournament_report',{p_session_id:states[0].sessionId});assert(error,'Anonymous report access must be denied');
+console.log(JSON.stringify({url:site,http:page.status,asset,newRankingPublished:true,excelControlPublished:true,excelChunkAvailable:true,publicStateMatchesAcrossClients:true,publicTeams:states[0].teams.length,privateFieldsExcluded:true,anonymousReportDenied:true,phase:states[0].phase,status:states[0].status,totals:states[0].totals},null,2));
+await Promise.all(clients.map(c=>c.removeAllChannels()));
