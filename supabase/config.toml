@@ -1,0 +1,9 @@
+project_id = "ingegames-2026"
+
+[auth]
+enabled = true
+enable_signup = false
+site_url = "http://localhost:5173/ingegames-2026/"
+
+[functions.command]
+verify_jwt = false

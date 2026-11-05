@@ -1,0 +1,35 @@
+{
+  "name": "ingegames-2026",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "provision": "node scripts/provision-accounts.mjs",
+    "test:sql": "vitest run tests/database.test.ts",
+    "check:edge": "deno check supabase/functions/command/index.ts"
+  },
+  "dependencies": {
+    "framer-motion": "^12.23.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0",
+    "@supabase/supabase-js": "2.119.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "6.2.1",
+    "tailwindcss": "^4.1.0",
+    "typescript": "~5.8.3",
+    "vite": "8.3.5",
+    "vitest": "5.1.0",
+    "@electric-sql/pglite": "^0.3.14"
+  }
+}
